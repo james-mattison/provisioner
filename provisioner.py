@@ -49,6 +49,8 @@ def create_record(domain_name,
         "priority": 0
     }
 
+    return make_request("")
+
 def get_instances():
     return make_request("instances", blob = dict())
 
@@ -104,3 +106,6 @@ parser.add_argument(
 parser.add_argument(
     "--no-provision", action = "store_true", default = False
 )
+
+if __name__ == "__main__":
+    args = parser.parse_args()
