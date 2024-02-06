@@ -8,7 +8,7 @@ provisioner.py: script to provison a VPS VM, create DNS entires, and boostrap
 the core packages to run the VPS system.
 """
 
-
+red = lambda text: f"\033[0;31m{text}\033[0m"
 
 API_KEY=os.environ['VULTR_API_KEY']
 
@@ -27,7 +27,12 @@ def make_request(*endpoints, blob: dict, kind = "get"):
             "Authorization": f"Bearer {API_KEY}"
             }
 
-    ret = requests.get(url, json = blob, headers = headers)
+    if hasattr(requests, kind):
+        cb = getattr(requests, kind)
+    else:
+        print(red(f"Failed: kidn: {kind} not a valid HTTP request type."))
+        quit(1)
+    ret = cb(url, json = blob, headers = headers)
     print(json.dumps(ret.json(), indent = 4))
     return ret.json()
 
@@ -106,7 +111,22 @@ def create_instance(
 
         region: str = "lax"
 ):
-    ...
+    ob = {
+        "region": region,
+        "plan": "vc2-1c-1gb",
+        "label": label,
+        "os_id": os_id or 2104,
+        "backups": "disabled",
+        "enable_ipv6": False,
+        "hostname": hostname,
+        "tags": []
+    }
+
+
+    ret = make_request("instances", blob = ob, kind = "post")
+
+    print(json.dumps(ret, indent = 4))
+    return ret
 
 
 parser = argparse.ArgumentParser()
@@ -121,6 +141,9 @@ parser.add_argument(
 parser.add_argument(
     "-k", "--key", action = "store"
 )
+
+parser.add_argument("-s", "--subdomain", action = "store")
+
 parser.add_argument(
     "--no-dns", action = "store_true", default = False
 )
@@ -138,3 +161,17 @@ if __name__ == "__main__":
                     print(entry['name'], entry['type'])
         elif args.target == "instances":
             pretty_print_instances()
+
+    elif args.action == "create":
+        if args.target == "instance":
+            if not args.subdomain:
+                print("Failed. Require -s/--subdomain if doing instane cretae")
+            if not args.domain:
+                print("Failed. Require -d/--domain if doing instance create.")
+            create_instance(args.subdomain + "." + args.domain,
+                            f"{args.subdomain} VPS Instance",
+                            2104,
+                            False)
+
+    else:
+        print(f"Failed: {args.action} {args.target} not understood with given.")
