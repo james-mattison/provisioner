@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import requests
 import json
 import os
@@ -33,9 +34,18 @@ def make_request(*endpoints, blob: dict, kind = "get"):
         print(red(f"Failed: kidn: {kind} not a valid HTTP request type."))
         quit(1)
     ret = cb(url, json = blob, headers = headers)
-    print(json.dumps(ret.json(), indent = 4))
-    return ret.json()
+    try:
+        print(json.dumps(ret.json(), indent = 4))
+        return ret.json()
 
+    except json.JSONDecodeError as e:
+        print(e)
+        return {}
+
+def watch_create_instance(creation_json: dict, key: str, value: str):
+    """
+    Watch the instance creatoion state until key == value.
+    """
 
 def list_dns_entries(domain_name: str):
     """
@@ -100,7 +110,7 @@ def get_ssh_key_id(name):
 def pretty_print_instances():
     instances = get_instances()
     for entry in instances['instances']:
-        print("{:20}: {:20}".format("Label", entry['label']))
+        print("{:20}: {:20} {:20}".format("Label", entry['label'], entry['id']))
         print("{:20}: {:20}".format("IP", entry['main_ip']))
 
 def create_instance(
@@ -126,8 +136,50 @@ def create_instance(
     ret = make_request("instances", blob = ob, kind = "post")
 
     print(json.dumps(ret, indent = 4))
+
+    watch_create_instance(ret, "main_ip")
     return ret
 
+def manage_instance_state(name: str, action: str):
+    if not action in ["reboot", "stop", "start"]:
+        raise Exception(f"Failed: action must be one of: reboot, stop, restart")
+
+    for instance in get_instances()['instances']:
+        if instance['label'] == name:
+            blob = { "instance_ids": [
+                instance['id']
+            ]}
+            make_request("instances", action, blob = blob, kind = "post")
+            print(f"{action.capitalize()}ed instance {name}")
+            break
+    else:
+        print(f"Failed: no instance named {name} to reboot!")
+
+
+def delete_instance(name: str):
+    for instance in get_instances()['instances']:
+        if instance['label'] == name:
+            blob = {
+                "instance_ids": instance['id']
+            }
+            make_request("instances", "delete", blob = blob, kind = "delete")
+            print(f"Deleted instance {instance['label']}")
+            break
+    else:
+        print(f"Failed: no instance named {name} to delete!")
+        return False
+    return True
+
+def reinstall_instance(name: str):
+    for instance in get_instances()['instances']:
+        if instance['label'] == name:
+            id =  instance['id']
+            blob = { "hostname": instance['hostname']}
+            make_request("instances", id, "reinstall", blob = blob, kind = "post")
+            print(f"Reinstalling instance {instance['label']}")
+    else:
+        print(f"No valid instance named {name} found. Cannot reinstall.")
+        return False
 
 parser = argparse.ArgumentParser()
 parser.add_argument("action", action = "store")
@@ -172,6 +224,15 @@ if __name__ == "__main__":
                             f"{args.subdomain} VPS Instance",
                             2104,
                             False)
+    elif args.action in ["stop", "start", "reboot"]  and args.target:
+        manage_instance_state(args.target, args.action)
 
+    elif args.action == "delete" and args.target:
+        if not input(f"Really delete instnace: {args.target}?").upper() in ["YES", "Y"]:
+            print(f"Not deleting instance {args.target}")
+        else:
+            delete_instance(args.target)
+    elif args.action == "reinstall" and args.target:
+        reinstall_instance(args.target)
     else:
         print(f"Failed: {args.action} {args.target} not understood with given.")
