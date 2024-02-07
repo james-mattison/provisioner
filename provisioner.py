@@ -46,6 +46,7 @@ def watch_create_instance(creation_json: dict, key: str, value: str):
     """
     Watch the instance creatoion state until key == value.
     """
+    print("ugh")
 
 def list_dns_entries(domain_name: str):
     """
@@ -137,7 +138,7 @@ def create_instance(
 
     if VERBOSE: print(json.dumps(ret, indent = 4))
 
-    watch_create_instance(ret, "main_ip")
+    watch_create_instance(ret, "main_ip", "0.0.0.0")
     return ret
 
 def manage_instance_state(name: str, action: str):
