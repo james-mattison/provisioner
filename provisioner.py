@@ -12,7 +12,7 @@ the core packages to run the VPS system.
 red = lambda text: f"\033[0;31m{text}\033[0m"
 
 API_KEY=os.environ['VULTR_API_KEY']
-
+VERBOSE=0
 
 def make_request(*endpoints, blob: dict, kind = "get"):
     """
@@ -23,7 +23,7 @@ def make_request(*endpoints, blob: dict, kind = "get"):
     url = "https://api.vultr.com/v2"
     for endpoint in endpoints:
         url += "/" + endpoint
-    print(f"URL: {url}")
+    if VERBOSE: print(f"URL: {url}")
     headers = {
             "Authorization": f"Bearer {API_KEY}"
             }
@@ -35,7 +35,7 @@ def make_request(*endpoints, blob: dict, kind = "get"):
         quit(1)
     ret = cb(url, json = blob, headers = headers)
     try:
-        print(json.dumps(ret.json(), indent = 4))
+        if VERBOSE: print(json.dumps(ret.json(), indent = 4))
         return ret.json()
 
     except json.JSONDecodeError as e:
@@ -135,7 +135,7 @@ def create_instance(
 
     ret = make_request("instances", blob = ob, kind = "post")
 
-    print(json.dumps(ret, indent = 4))
+    if VERBOSE: print(json.dumps(ret, indent = 4))
 
     watch_create_instance(ret, "main_ip")
     return ret
@@ -146,10 +146,7 @@ def manage_instance_state(name: str, action: str):
 
     for instance in get_instances()['instances']:
         if instance['label'] == name:
-            blob = { "instance_ids": [
-                instance['id']
-            ]}
-            make_request("instances", action, blob = blob, kind = "post")
+            make_request("instances", instance['id'], action, blob = {}, kind = "post")
             print(f"{action.capitalize()}ed instance {name}")
             break
     else:
@@ -203,8 +200,14 @@ parser.add_argument(
     "--no-provision", action = "store_true", default = False
 )
 
+parser.add_argument(
+    "-v", "--verbose", action = "store_true", default = False
+)
+
 if __name__ == "__main__":
     args = parser.parse_args()
+    if args.verbose:
+        VERBOSE = 1
     if args.action == "get":
         if args.target == "dns":
             ob = list_dns_entries("slovendor.com")
