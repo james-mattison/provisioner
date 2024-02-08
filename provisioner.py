@@ -2,7 +2,10 @@
 import requests
 import json
 import os
+import time
 import argparse
+import subprocess
+
 
 """
 provisioner.py: script to provison a VPS VM, create DNS entires, and boostrap
@@ -13,8 +16,31 @@ red = lambda text: f"\033[0;31m{text}\033[0m"
 
 API_KEY=os.environ['VULTR_API_KEY']
 VERBOSE=0
+def spinner():
+    spins = [
+        "/",
+        "-",
+        "\\",
+        "|",
+        "/",
+        "-",
+        "\\",
+        "|"
+    ]
 
-def make_request(*endpoints, blob: dict, kind = "get"):
+    while True:
+        for i in spins:
+            yield i
+
+def copy_ssh_id(target: str, password: str):
+    cmd = "sshpass -p '{password}' ssh-copy-id -o 'StrictHostKeyChecking no' root@{target}"
+    print(f"Exec: {cmd}")
+    s = subprocess.run(cmd, shell = True)
+    while s.returncode != 0:
+        s = subprocess.run(cmd, shell = True)
+    print(f"Keys installed.")
+
+def make_request(*endpoints, blob: dict, kind = "get", returns = True):
     """
     Send a request to Vultr API
     """
@@ -31,22 +57,48 @@ def make_request(*endpoints, blob: dict, kind = "get"):
     if hasattr(requests, kind):
         cb = getattr(requests, kind)
     else:
-        print(red(f"Failed: kidn: {kind} not a valid HTTP request type."))
+        print(red(f"Failed: kind: {kind} not a valid HTTP request type."))
         quit(1)
     ret = cb(url, json = blob, headers = headers)
     try:
         if VERBOSE: print(json.dumps(ret.json(), indent = 4))
-        return ret.json()
-
+        if returns:
+            return ret.json()
+        else:
+            return {}
     except json.JSONDecodeError as e:
         print(e)
         return {}
 
-def watch_create_instance(creation_json: dict, key: str, value: str):
+def watch_instance(blob: dict, target_state: str):
     """
     Watch the instance creatoion state until key == value.
     """
-    print("ugh")
+
+    instance_id = blob['instance']['id']
+    main_ip = blob['instance']['main_ip']
+    status = blob['instance']['server_status']
+    default_password = blob.get('default_password')
+
+    spin = spinner()
+    i = 0
+    while status != "ok":
+        time.sleep(1)
+        i += 1
+        instances = get_instances()['instances']
+        for instance in instances:
+            if instance['id'] == instance_id:
+                status = instance['server_status']
+                n = next(spin)
+                print(f"{n} Waiting for: {instance['label']} to have state: {target_state}. Current state: {status} ({i})\r", end = "", flush = True)
+                default_password = instance.get('default_password')
+    print(f"Default password:", default_password)
+
+    if not default_password:
+        print("failed - didn't get password!")
+    else:
+        copy_ssh_id(main_ip, default_password)
+
 
 def list_dns_entries(domain_name: str):
     """
@@ -137,8 +189,8 @@ def create_instance(
     ret = make_request("instances", blob = ob, kind = "post")
 
     if VERBOSE: print(json.dumps(ret, indent = 4))
-
-    watch_create_instance(ret, "main_ip", "0.0.0.0")
+    print(f"Created instance: {label}.")
+    watch_instance(ret, target_state = "ok")
     return ret
 
 def manage_instance_state(name: str, action: str):
@@ -157,10 +209,7 @@ def manage_instance_state(name: str, action: str):
 def delete_instance(name: str):
     for instance in get_instances()['instances']:
         if instance['label'] == name:
-            blob = {
-                "instance_ids": instance['id']
-            }
-            make_request("instances", "delete", blob = blob, kind = "delete")
+            make_request("instances", instance['id'], blob = {}, kind = "delete", returns = False)
             print(f"Deleted instance {instance['label']}")
             break
     else:
@@ -192,6 +241,10 @@ parser.add_argument(
     "-k", "--key", action = "store"
 )
 
+parser.add_argument(
+    "-o", "--os-id", action = "store"
+)
+
 parser.add_argument("-s", "--subdomain", action = "store")
 
 parser.add_argument(
@@ -203,6 +256,10 @@ parser.add_argument(
 
 parser.add_argument(
     "-v", "--verbose", action = "store_true", default = False
+)
+
+parser.add_argument(
+    "-y", "--assume-yes", action = "store_true", default = False
 )
 
 if __name__ == "__main__":
@@ -217,22 +274,33 @@ if __name__ == "__main__":
                     print(entry['name'], entry['type'])
         elif args.target == "instances":
             pretty_print_instances()
+        elif args.target in [ "oses", "osids" ]:
+            print(json.dumps(get_os_ids(), indent = 4))
 
     elif args.action == "create":
         if args.target == "instance":
             if not args.subdomain:
                 print("Failed. Require -s/--subdomain if doing instane cretae")
+                quit(1)
             if not args.domain:
                 print("Failed. Require -d/--domain if doing instance create.")
+                quit(1)
+            if not args.os_id:
+                print("Failed. Require -o/--os-id if doing instance create.")
+                print("Get available os ids with `get osids`")
+                quit(1)
+            if not args.name:
+                args.name = "{args.subdomain}.args.domain}"
+                print(f"Warning: using default name '{args.name}")
             create_instance(args.subdomain + "." + args.domain,
-                            f"{args.subdomain} VPS Instance",
-                            2104,
+                            args.name,
+                            args.os_id,
                             False)
     elif args.action in ["stop", "start", "reboot"]  and args.target:
         manage_instance_state(args.target, args.action)
 
     elif args.action == "delete" and args.target:
-        if not input(f"Really delete instnace: {args.target}?").upper() in ["YES", "Y"]:
+        if not args.assume_yes and not input(f"Really delete instance: {args.target}?").upper() in ["YES", "Y"]:
             print(f"Not deleting instance {args.target}")
         else:
             delete_instance(args.target)
