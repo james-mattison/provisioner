@@ -304,6 +304,30 @@ parser.add_argument(
 
 if __name__ == "__main__":
     args = parser.parse_args()
+    dns_needs = needed = {
+                "subdomain": args.subdomain,
+                "domain": args.domain,
+                "kind": args.kind,
+                "value": args.value
+            }
+    instance_needs = {
+                "subdomain": args.subdomain,
+                "domain": args.domain,
+                "os_id": args.os_id
+            }
+
+    def check_dns_needs():
+        for k, v in dns_needs.items():
+            if not v:
+                print(f"Need command line flag for:  {k} to manage DNS")
+                quit(1)
+
+    def check_instance_needs():
+        for k, v in instance_needs.items():
+            if not v:
+                print(f"Need command line flag for: {k} to manage instances.")
+                quit(1)
+
     if args.verbose:
         VERBOSE = 1
     if args.action == "get":
@@ -319,29 +343,11 @@ if __name__ == "__main__":
 
     elif args.action == "create":
         if args.target == "dns":
-            needed = {
-                "subdomain": args.subdomain,
-                "domain": args.domain,
-                "kind": args.kind,
-                "value": args.value
-            }
-            for k, v in needed.items():
-                if not hasattr(args, k):
-                    print(f"Missing {k} in args. Needed for creation")
-                    quit(1)
-            create_record(needed['domain'], needed['kind'], needed['subdomain'], needed['value'], 600)
+            check_dns_needs()
+            create_record(args.domain, args.kind, args.subdomain, args.value, 600)
 
         if args.target == "instance":
-            if not args.subdomain:
-                print("Failed. Require -s/--subdomain if doing instane cretae")
-                quit(1)
-            if not args.domain:
-                print("Failed. Require -d/--domain if doing instance create.")
-                quit(1)
-            if not args.os_id:
-                print("Failed. Require -o/--os-id if doing instance create.")
-                print("Get available os ids with `get osids`")
-                quit(1)
+            check_instance_needs()
             if not args.name:
                 args.name = "{args.subdomain}.args.domain}"
                 print(f"Warning: using default name '{args.name}")
@@ -349,6 +355,19 @@ if __name__ == "__main__":
                             args.name,
                             args.os_id,
                             False)
+
+    elif args.action == "provision":
+        check_instance_needs()
+        check_dns_needs()
+        instance = create_instance(args.subdomain + "." + args.domain,
+                        args.name,
+                        args.os_id,
+                        False)
+
+        main_ip = instance['main_ip']
+        create_record(args.domain, args.kind, args.subdomain, main_ip, 600)
+
+
     elif args.action in ["stop", "start", "reboot"]  and args.target:
         manage_instance_state(args.target, args.action)
 
