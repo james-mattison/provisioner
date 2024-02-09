@@ -32,13 +32,24 @@ def spinner():
         for i in spins:
             yield i
 
-def copy_ssh_id(target: str, password: str):
-    cmd = "sshpass -p '{password}' ssh-copy-id -o 'StrictHostKeyChecking no' root@{target}"
-    print(f"Exec: {cmd}")
-    s = subprocess.run(cmd, shell = True)
-    while s.returncode != 0:
-        s = subprocess.run(cmd, shell = True)
-    print(f"Keys installed.")
+def test_key(target_addr: str):
+
+    cmd = f"ssh -o 'StrictHostKeyChecking no' root@{target_addr} hostname"
+    r = subprocess.run(cmd, shell = True)
+    try:
+        while r.returncode != 0:
+            r = subprocess.run(cmd, shell = True)
+        return True
+    except KeyboardInterrupt as e:
+        print(f"Got keyboard interrupt during {cmd}. {red('SSH not tested or failed.')}")
+        return False
+
+def get_master_key_id(name: str = "master"):
+    keys = make_request("ssh-keys", blob = {})
+    for ob in keys['ssh_keys']:
+        if ob['name'] == name:
+            return ob['id']
+
 
 def make_request(*endpoints, blob: dict, kind = "get", returns = True):
     """
@@ -70,6 +81,7 @@ def make_request(*endpoints, blob: dict, kind = "get", returns = True):
         print(e)
         return {}
 
+
 def watch_instance(blob: dict, target_state: str):
     """
     Watch the instance creatoion state until key == value.
@@ -89,15 +101,18 @@ def watch_instance(blob: dict, target_state: str):
         for instance in instances:
             if instance['id'] == instance_id:
                 status = instance['server_status']
+                main_ip = instance['main_ip']
                 n = next(spin)
-                print(f"{n} Waiting for: {instance['label']} to have state: {target_state}. Current state: {status} ({i})\r", end = "", flush = True)
-                default_password = instance.get('default_password')
-    print(f"Default password:", default_password)
+                pws = "Yes" if default_password else "No"
+                print(
+                    f"{n} Waiting for: {instance['label']} to have state: {target_state} (current state: {status}) (PW: {pws}) ({i}/unlimited)\r",
+                    end = "",
+                    flush = True)
+                pw = instance.get('default_password')
+                if pw and not default_password:
+                    default_password = instance.get('default_password')
 
-    if not default_password:
-        print("failed - didn't get password!")
-    else:
-        copy_ssh_id(main_ip, default_password)
+    test_key(main_ip)
 
 
 def list_dns_entries(domain_name: str):
@@ -118,20 +133,38 @@ def create_record(domain_name,
     Create a DNS entry using the VULTR API
     """
 
+    current_recordes = list_dns_entries(domain_name)
+    current = False
+    for record in current_recordes['records']:
+        if record['name'] == record_name:
+            current = record['id']
+
+
+
     endpoints = ["domains",
                  domain_name,
                  "records"]
 
+    key_id = get_master_key_id()
     kind = "post"
     json_blob = {
         "name": record_name,
         "type": record_kind,
         "data": record_value,
         "ttl": ttl,
-        "priority": 0
+        "priority": 0,
+        "sshkey_id": key_id
     }
 
-    return make_request(*endpoints, blob = json_blob, kind = kind)
+    if current:
+        endpoints = ["domains", domain_name, "records", current]
+        kind = "patch"
+        returns = False
+        print(f"Have current DNS record with ID: {current}")
+    else:
+        print(f"Creating DNS entry for {json_blob['name']}")
+        returns = True
+    make_request(*endpoints, blob = json_blob, kind = kind, returns = returns )
 
 def get_instances():
     return make_request("instances", blob = dict())
@@ -235,10 +268,17 @@ parser.add_argument(
     "-d", "--domain", action = "store", default = "slovendor.com"
 )
 parser.add_argument(
-    "-n", "--name", action = "store"
+    "-n", "--name", action = "store", help = "Name of instance"
 )
+
 parser.add_argument(
-    "-k", "--key", action = "store"
+    "-V", "--value", action = "store", help = "Value for DNS entry."
+)
+
+parser.add_argument("-K", "--kind", help = "DNS record kind", default = "A")
+
+parser.add_argument(
+    "-k", "--key", action = "store", help = "SSH key to use"
 )
 
 parser.add_argument(
@@ -278,6 +318,19 @@ if __name__ == "__main__":
             print(json.dumps(get_os_ids(), indent = 4))
 
     elif args.action == "create":
+        if args.target == "dns":
+            needed = {
+                "subdomain": args.subdomain,
+                "domain": args.domain,
+                "kind": args.kind,
+                "value": args.value
+            }
+            for k, v in needed.items():
+                if not hasattr(args, k):
+                    print(f"Missing {k} in args. Needed for creation")
+                    quit(1)
+            create_record(needed['domain'], needed['kind'], needed['subdomain'], needed['value'], 600)
+
         if args.target == "instance":
             if not args.subdomain:
                 print("Failed. Require -s/--subdomain if doing instane cretae")
