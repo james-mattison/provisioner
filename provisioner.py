@@ -160,7 +160,7 @@ def create_record(domain_name,
         endpoints = ["domains", domain_name, "records", current]
         kind = "patch"
         returns = False
-        print(f"Have current DNS record with ID: {current}")
+        print(f"Have current DNS record with ID: {current}. Updating.")
     else:
         print(f"Creating DNS entry for {json_blob['name']}")
         returns = True
